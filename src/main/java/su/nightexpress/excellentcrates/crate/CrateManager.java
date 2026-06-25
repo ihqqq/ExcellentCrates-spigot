@@ -47,6 +47,7 @@ import su.nightexpress.excellentcrates.util.CrateUtils;
 import su.nightexpress.excellentcrates.util.InteractType;
 import su.nightexpress.excellentcrates.util.ItemHelper;
 import su.nightexpress.excellentcrates.util.pos.WorldPos;
+import su.nightexpress.excellentcrates.util.server.FoliaUtils;
 import su.nightexpress.nightcore.config.FileConfig;
 import su.nightexpress.nightcore.core.config.CoreLang;
 import su.nightexpress.nightcore.manager.AbstractManager;
@@ -96,11 +97,13 @@ public class CrateManager extends AbstractManager<CratesPlugin> {
         this.loadCrates();
         this.loadUI();
         this.loadDialogs();
-        this.plugin.runTask(task -> this.reportProblems()); // After everything is loaded.
+        this.plugin.runTask(() -> this.reportProblems()); // After everything is loaded.
 
         this.addListener(new CrateListener(this.plugin, this));
 
-        this.addAsyncTask(this::playCrateEffects, 1L);
+        if (!FoliaUtils.isFolia()) {
+            this.addTask(this::playCrateEffects, 1L);
+        }
         this.addAsyncTask(this::saveCrates, Config.CRATE_SAVE_INTERVAL.get());
     }
 
