@@ -47,6 +47,7 @@ import su.nightexpress.excellentcrates.util.CrateUtils;
 import su.nightexpress.excellentcrates.util.InteractType;
 import su.nightexpress.excellentcrates.util.ItemHelper;
 import su.nightexpress.excellentcrates.util.pos.WorldPos;
+import su.nightexpress.excellentcrates.util.server.FoliaUtils;
 import su.nightexpress.nightcore.config.FileConfig;
 import su.nightexpress.nightcore.core.config.CoreLang;
 import su.nightexpress.nightcore.manager.AbstractManager;
@@ -96,11 +97,13 @@ public class CrateManager extends AbstractManager<CratesPlugin> {
         this.loadCrates();
         this.loadUI();
         this.loadDialogs();
-        this.plugin.runTask(task -> this.reportProblems()); // After everything is loaded.
+        this.plugin.runTask(() -> this.reportProblems()); // After everything is loaded.
 
         this.addListener(new CrateListener(this.plugin, this));
 
-        this.addAsyncTask(this::playCrateEffects, 1L);
+        if (!FoliaUtils.isFolia()) {
+            this.addTask(this::playCrateEffects, 1L);
+        }
         this.addAsyncTask(this::saveCrates, Config.CRATE_SAVE_INTERVAL.get());
     }
 
@@ -726,6 +729,30 @@ public class CrateManager extends AbstractManager<CratesPlugin> {
 
     public void removePreviewCooldown(@NotNull Player player) {
         this.previewCooldown.remove(player.getUniqueId());
+    }
+
+    public void playCrateEffects(@NotNull Player player) {
+        this.getCrates().forEach(crate -> {
+            if (!crate.isEffectEnabled()) return;
+
+            CrateEffect effect = crate.getEffect();
+            if (effect.isDummy()) return;
+
+            UniParticle particle = crate.getEffectParticle();
+            String worldName = player.getWorld().getName();
+            int distance = Config.CRATE_EFFECTS_VISIBILITY_DISTANCE.get();
+
+            crate.getBlockPositions().forEach(worldPos -> {
+                if (!worldPos.getWorldName().equals(worldName)) return;
+
+                Location location = new Location(player.getWorld(), worldPos.getX() + 0.5D, worldPos.getY(), worldPos.getZ() + 0.5D);
+                if (player.getLocation().distanceSquared(location) > distance * distance) return;
+
+                effect.playStep(location, particle, player);
+            });
+        });
+
+        CratesRegistries.getEffects().forEach(CrateEffect::addTickCount);
     }
 
     public void playCrateEffects() {
