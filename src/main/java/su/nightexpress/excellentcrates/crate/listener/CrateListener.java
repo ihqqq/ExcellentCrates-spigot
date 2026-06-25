@@ -11,6 +11,8 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.AnvilInventory;
 import org.bukkit.inventory.CraftingInventory;
@@ -24,11 +26,14 @@ import su.nightexpress.excellentcrates.config.Lang;
 import su.nightexpress.excellentcrates.crate.CrateManager;
 import su.nightexpress.excellentcrates.crate.impl.Crate;
 import su.nightexpress.excellentcrates.util.InteractType;
+import su.nightexpress.excellentcrates.util.server.FoliaUtils;
 import su.nightexpress.nightcore.manager.AbstractListener;
 import su.nightexpress.nightcore.util.time.TimeFormatType;
 import su.nightexpress.nightcore.util.time.TimeFormats;
 
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -37,17 +42,42 @@ public class CrateListener extends AbstractListener<CratesPlugin> {
 
     private final CrateManager manager;
     private final Set<UUID> adventureFix;
+    private final Map<UUID, Object> foliaEffectTasks;
 
     public CrateListener(@NotNull CratesPlugin plugin, @NotNull CrateManager manager) {
         super(plugin);
         this.manager = manager;
         this.adventureFix = new HashSet<>();
+        this.foliaEffectTasks = new HashMap<>();
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onJoin(PlayerJoinEvent event) {
+        if (!FoliaUtils.isFolia()) return;
+
+        Player player = event.getPlayer();
+        Object task = FoliaUtils.runAtFixedRate(player, this.plugin, () -> this.manager.playCrateEffects(player), 1L, 1L);
+        if (task != null) {
+            this.foliaEffectTasks.put(player.getUniqueId(), task);
+        }
+        this.manager.playCrateEffects(player);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onMove(PlayerMoveEvent event) {
+        if (!FoliaUtils.isFolia()) return;
+        if (event.getFrom().getBlockX() == event.getTo().getBlockX()
+            && event.getFrom().getBlockY() == event.getTo().getBlockY()
+            && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) return;
+
+        this.manager.playCrateEffects(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.NORMAL)
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
 
+        FoliaUtils.cancelTask(this.foliaEffectTasks.remove(player.getUniqueId()));
         this.manager.removePreviewCooldown(player);
     }
 

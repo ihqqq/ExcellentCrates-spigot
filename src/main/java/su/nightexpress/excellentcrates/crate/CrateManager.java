@@ -731,6 +731,30 @@ public class CrateManager extends AbstractManager<CratesPlugin> {
         this.previewCooldown.remove(player.getUniqueId());
     }
 
+    public void playCrateEffects(@NotNull Player player) {
+        this.getCrates().forEach(crate -> {
+            if (!crate.isEffectEnabled()) return;
+
+            CrateEffect effect = crate.getEffect();
+            if (effect.isDummy()) return;
+
+            UniParticle particle = crate.getEffectParticle();
+            String worldName = player.getWorld().getName();
+            int distance = Config.CRATE_EFFECTS_VISIBILITY_DISTANCE.get();
+
+            crate.getBlockPositions().forEach(worldPos -> {
+                if (!worldPos.getWorldName().equals(worldName)) return;
+
+                Location location = new Location(player.getWorld(), worldPos.getX() + 0.5D, worldPos.getY(), worldPos.getZ() + 0.5D);
+                if (player.getLocation().distanceSquared(location) > distance * distance) return;
+
+                effect.playStep(location, particle, player);
+            });
+        });
+
+        CratesRegistries.getEffects().forEach(CrateEffect::addTickCount);
+    }
+
     public void playCrateEffects() {
         this.getCrates().forEach(crate -> {
             if (!crate.isEffectEnabled()) return;
