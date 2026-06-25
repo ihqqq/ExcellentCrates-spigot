@@ -2,7 +2,6 @@ package su.nightexpress.excellentcrates.hologram;
 
 import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -18,8 +17,8 @@ import su.nightexpress.excellentcrates.hologram.listener.HologramListener;
 import su.nightexpress.excellentcrates.hooks.HookId;
 import su.nightexpress.excellentcrates.util.CrateUtils;
 import su.nightexpress.excellentcrates.util.pos.WorldPos;
+import su.nightexpress.excellentcrates.util.server.FoliaUtils;
 import su.nightexpress.nightcore.manager.AbstractManager;
-import su.nightexpress.nightcore.util.LocationUtil;
 import su.nightexpress.nightcore.util.Plugins;
 import su.nightexpress.nightcore.util.placeholder.Replacer;
 
@@ -41,7 +40,12 @@ public class HologramManager extends AbstractManager<CratesPlugin> {
         if (this.detectHandler()) {
             this.addListener(new HologramListener(this.plugin, this));
 
-            this.addAsyncTask(this::tickHolograms, Config.CRATE_HOLOGRAM_UPDATE_INTERVAL.get());
+            if (!FoliaUtils.isFolia()) {
+                this.addTask(this::tickHolograms, Config.CRATE_HOLOGRAM_UPDATE_INTERVAL.get());
+            }
+            else {
+                this.plugin.warn("Crate holograms on Folia are updated by player movement instead of a global world scan.");
+            }
         }
     }
 
@@ -145,6 +149,56 @@ public class HologramManager extends AbstractManager<CratesPlugin> {
         this.handler.sendDestroyEntityPacket(group.getEntityIDs());
     }
 
+    public void renderForViewer(@NotNull Player player) {
+        this.plugin.getCrateManager().getCrates().forEach(crate -> {
+            if (!crate.isHologramEnabled()) return;
+
+            this.render(crate, player);
+        });
+    }
+
+    public void render(@NotNull Crate crate, @NotNull Player player) {
+        this.createIfAbsent(crate, player);
+
+        FakeDisplay display = this.getDisplay(crate);
+        if (display == null) return;
+
+        List<String> text = Replacer.create().replace(crate.replacePlaceholders()).apply(crate.getHologramText().reversed());
+        if (text.isEmpty()) return;
+
+        String worldName = player.getWorld().getName();
+        Location playerLocation = player.getLocation();
+
+        for (FakeEntityGroup group : display.getGroups()) {
+            if (group.isDisabled()) continue;
+
+            WorldPos blockPosition = group.getBlockPosition();
+            if (!blockPosition.getWorldName().equals(worldName)) {
+                this.removeForViewer(player, group);
+                continue;
+            }
+
+            double distanceSquared = playerLocation.distanceSquared(this.toCenterLocation(player.getWorld(), blockPosition, crate.getHologramYOffset() + 0.2D));
+            double range = Config.CRATE_EFFECTS_VISIBILITY_DISTANCE.get();
+            if (distanceSquared > range * range) {
+                this.removeForViewer(player, group);
+                continue;
+            }
+
+            boolean needSpawn = !group.isViewer(player);
+
+            List<String> hologramText = Replacer.create().replacePlaceholderAPI(player).apply(text);
+            List<FakeEntity> holograms = group.getEntities();
+            for (int index = 0; index < holograms.size(); index++) {
+                String line = index >= hologramText.size() ? "" : hologramText.get(index);
+                FakeEntity entity = holograms.get(index);
+                this.handler.sendHologramPackets(player, entity, needSpawn, line);
+            }
+
+            group.addViewer(player);
+        }
+    }
+
 
 
     public void render(@NotNull Crate crate) {
@@ -199,22 +253,25 @@ public class HologramManager extends AbstractManager<CratesPlugin> {
     }
 
     private void createIfAbsent(@NotNull Crate crate) {
+        this.createIfAbsent(crate, null);
+    }
+
+    private void createIfAbsent(@NotNull Crate crate, @Nullable Player viewer) {
         if (!this.hasHandler()) return;
-        if (this.displayMap.containsKey(crate.getId())) return;
 
         List<String> originText = crate.getHologramText();
         if (originText.isEmpty()) return;
 
-        FakeDisplay display = new FakeDisplay();
+        FakeDisplay display = this.displayMap.computeIfAbsent(crate.getId(), id -> new FakeDisplay());
 
         double yOffset = crate.getHologramYOffset() + 0.2;
         double lineGap = Config.CRATE_HOLOGRAM_LINE_GAP.get();
 
         crate.getBlockPositions().forEach(blockPos -> {
-            Block block = blockPos.toBlock();
-            if (block == null) return;
+            if (display.getGroup(blockPos) != null) return;
 
-            double height = block.getBoundingBox().getHeight() / 2D + yOffset;
+            Location baseLocation = viewer == null ? this.toCenterLocation(blockPos, yOffset) : this.toCenterLocation(viewer, blockPos, yOffset);
+            if (baseLocation == null) return;
 
             // Allocate ID values for our fake entities, so there is no clash with new server entities.
 
@@ -223,11 +280,31 @@ public class HologramManager extends AbstractManager<CratesPlugin> {
             for (int index = 0; index < originText.size(); index++) {
                 double gap = lineGap * index;
 
-                Location location = LocationUtil.setCenter3D(block.getLocation()).add(0, height + gap, 0);
+                Location location = baseLocation.clone().add(0, gap, 0);
                 group.addEntity(FakeEntity.create(location));
             }
         });
-
-        this.displayMap.put(crate.getId(), display);
     }
+
+    @Nullable
+    private Location toCenterLocation(@NotNull Player viewer, @NotNull WorldPos blockPos, double yOffset) {
+        World world = viewer.getWorld();
+        if (!blockPos.getWorldName().equals(world.getName())) return null;
+
+        return this.toCenterLocation(world, blockPos, yOffset);
+    }
+
+    @Nullable
+    private Location toCenterLocation(@NotNull WorldPos blockPos, double yOffset) {
+        World world = blockPos.getWorld();
+        if (world == null) return null;
+
+        return this.toCenterLocation(world, blockPos, yOffset);
+    }
+
+    @NotNull
+    private Location toCenterLocation(@NotNull World world, @NotNull WorldPos blockPos, double yOffset) {
+        return new Location(world, blockPos.getX() + 0.5D, blockPos.getY() + 1.0D + yOffset, blockPos.getZ() + 0.5D);
+    }
+
 }
